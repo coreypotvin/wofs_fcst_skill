@@ -1,6 +1,6 @@
 # WOFS_FCST_SKILL
 
-Software package developed to predict forecast skill of the [NSSL Warn-on-Forecast System (WoFS)] (https://wof.nssl.noaa.gov/)
+Software package developed to predict forecast skill of the [NSSL Warn-on-Forecast System (WoFS)](https://wof.nssl.noaa.gov/)
 Corey Potvin (NSSL), 2023 
 
 ## Dependencies
