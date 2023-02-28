@@ -1,3 +1,5 @@
+# Model training, hyperparameter optimization, testing, evaluation
+
 from defs import *
 
 # Write stdout/stderr to log files (in addition to screen)
@@ -5,8 +7,6 @@ output1 = open(logfile,'w')
 output2 = open(errfile,'w')
 sys.stdout=Unbuffered(sys.stdout, output1)
 sys.stderr=Unbuffered(sys.stderr, output2)
-
-#global num_classes
 
 rng = np.random.RandomState(0)
 
@@ -34,11 +34,6 @@ else:
   # Time features are replaced by converted versions
   training_features.remove('init_time'); training_features.remove('valid_time'); #training_features.remove('lead_time')
 
-#try:
-#  training_features.remove('init_eFSS_fcst_box')
-#except:
-#  pass
-
 # Convert times from 'hhmm' to # hours after 20 UTC (only done when a new WoFS stats dataset is used)
 if fname == prelim_features_fname and not pers_bl and not sprd_bl:
   for var in ['init_time', 'valid_time']:
@@ -54,10 +49,8 @@ if len(dummy_cols) > 0:
     if any(item+'_' in feature for item in categorical_metrics):
       training_features.append(feature)
 
-#removed_features = [feature for feature in training_features if feature not in list(features.keys())]
 training_features = [feature for feature in training_features if feature in list(features.keys())]
 print ('%d training features' % len(training_features))
-#print ('%d removed features' % len(removed_features))
 
 # Remove duplicate examples
 print ('Before removing duplicate examples: ', features.shape[0])
@@ -68,11 +61,6 @@ print ('After removing duplicate examples: ', features.shape[0])
 print ('Before removing examples with undefined target/BL feature: ', features.shape[0])
 features = features[((features[target] != -999) & (features[pers_feature] != -999) & (features[sprd_feature] != -999))]
 print ('After removing examples with undefined target/BL feature: ', features.shape[0])
-
-## Convert times from 'hhmm' to # hours after 20 UTC
-#if 'init_time' in features.columns and fname == prelim_features_fname and not pers_bl and not sprd_bl:
-#  features['init_time2'] = convert_time(features['init_time'])
-#  training_features += ['init_time2']
 
 # retain a copy of all features for use in verification; only training features will be retained in 'features' dataset for use in ML 
 all_features = copy.deepcopy(features)
@@ -94,10 +82,6 @@ else:
 
 print ('Feature correlations with target:\n')
 corrs = np.array([np.corrcoef(features[feature], labels)[0][1] for feature in training_features])
-#try:
-#  corrs = np.array([np.corrcoef(features[feature], features['labels'])[0][1] for feature in training_features])
-#except:
-#  corrs = np.array([np.corrcoef(features[feature], features[target])[0][1] for feature in training_features])
 sorted_inds = np.argsort(-np.fabs(corrs))
 sorted_corrs = corrs[sorted_inds]
 for c, corr in enumerate(sorted_corrs):
@@ -113,7 +97,7 @@ if 'reduced' not in fname:
   print ('\nWriting original features to: %s' % orig_features_fname)
   print ('Features dims = ', temp.shape)
 
-# Finally drop all features that won't be used for ML
+# Finally, drop all features that won't be used for ML
 features = features.drop([feature for feature in features.columns if (feature not in training_features and feature[-2] != '_')], axis=1)
 
 print ('\n%d samples total for training/testing' % features.shape[0])
@@ -131,11 +115,9 @@ allfolds_train_features_unscaled = allfolds_train_features.copy()
 
 # Scale the features if required by the learning algorithm
 
-if learn_algo in ['LR', 'NN', 'OLR', 'stacked_LR', 'stacked_NN']: 
+if learn_algo in ['LR', 'NN', 'OLR']: 
 
   if train_test_split_param == 'dates':
-
-    #allfolds_train_features_unscaled = allfolds_train_features.copy()
 
     for fold in range(num_folds):
 
@@ -170,12 +152,14 @@ else:
   print ('Class balance of testing dataset: ', [round(len(test_labels[test_labels==n])/test_features.shape[0],2) for n in range(num_classes)])
 
 # Train the model (i.e., don't read previously trained model)
+
 if do_train:
 
   # Perform hyperparameter optimization (i.e., don't read previously optimized hyperparameters)
+
   if do_hyper_opt:
 
-    # Specify hyperparameter search space and model training parameters
+    # Get hyperparameter search space and model training parameters; user prescribes these in hyper_opt_learn_prep 
     learner, param_distributions = hyper_opt_learn_prep(learn_algo, rng)
 
     # Generate train-test splits for CV 
@@ -193,6 +177,7 @@ if do_train:
     print ('\nTuned hyperparameters!')
 
   # Otherwise read previously optimized hyperparameters
+
   else:
 
     if train_test_split_param == 'dates':
@@ -308,6 +293,7 @@ elif num_classes2==5:
 
 fig, SRs, tpr, all_auc, all_max_csi, all_max_csi_thres = plot_ROC(prob_predictions, test_labels, classes)
 P.savefig(ROC_fname, bbox_inches='tight')
+print ('Saved %s' % ROC_fname)
 
 with open(roc_data_fname, 'wb') as handle:
   pickle.dump((prob_predictions, test_labels), handle)
@@ -333,6 +319,7 @@ for i in range(num_classes2):
   bss_rels.append(bss_rel)
 fig = attr_diag(mean_probs, cond_freqs, base_rate, bss_rels, classes)
 P.savefig(AD_fname, bbox_inches='tight')
+print ('Saved %s' % AD_fname)
 
 with open(attr_data_fname, 'wb') as handle:
   pickle.dump((mean_probs, cond_freqs, base_rate, bss_rels), handle)
@@ -360,7 +347,7 @@ for label in range(len(classes)):
   print ('Class %d: NAUPDC = %.2f, NCSI = %.2f' % (label, NAUPDC, NCSI))
 P.legend(loc='best', fontsize=11)
 P.savefig(PD_fname, bbox_inches='tight')
-print ()
+print ('Saved %s\n' % PD_fname)
 
 # Confusion Matrices
 
@@ -379,12 +366,14 @@ P.figure()
 plot_confusion_matrix(cnf_matrix, classes=classes,
                   title='Confusion matrix')
 P.savefig('%s/conf_matrix_%s.png' % (MAIN_DIR, exp_name))
+print ('Saved %s/conf_matrix_%s.png' % (MAIN_DIR, exp_name))
 
 # Plot normalized confusion matrix
 P.figure()
 plot_confusion_matrix(cnf_matrix, classes=classes, normalize=True,
                   title='Normalized confusion matrix')
 P.savefig('%s/conf_matrix_norm_%s.png' % (MAIN_DIR, exp_name))
+print ('Saved %s/conf_matrix_norm_%s.png' % (MAIN_DIR, exp_name))
 
 # Focus on high-confidence predictions
 
@@ -401,6 +390,7 @@ P.figure()
 plot_confusion_matrix(cnf_matrix, classes=classes,
                   title='Confusion matrix')
 P.savefig('%s/conf_matrix_highconfidence_%s.png' % (MAIN_DIR, exp_name))
+print ('Saved %s/conf_matrix_highconfidence_%s.png' % (MAIN_DIR, exp_name))
 
 # Plot normalized confusion matrix
 P.figure()
@@ -408,6 +398,7 @@ cnf_matrix = confusion_matrix(test_labels2, predictions2)
 plot_confusion_matrix(cnf_matrix, classes=classes, normalize=True,
                   title='Normalized confusion matrix')
 P.savefig('%s/conf_matrix_norm_highconfidence_%s.png' % (MAIN_DIR, exp_name))
+print ('Saved %s/conf_matrix_norm_highconfidence_%s.png' % (MAIN_DIR, exp_name))
 
 print(("\n TOTAL RUNTIME: %.1f \n" % ((time.time() - start_time)/60.)))
 

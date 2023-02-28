@@ -1,3 +1,5 @@
+# Many of the user-specified parameters used in package
+
 from imports import *
 
 # directory where all output is written
@@ -62,7 +64,7 @@ min_corr = 0.1
 #reduced_cc = min_corr = False
 
 # number of most important features to use (if False, disregard feature importance)
-imp_vars = 10#False
+imp_vars = 15#False
 
 # permutation method used to rank features (ignored if imp_vars = False)
 direction = 'forward'

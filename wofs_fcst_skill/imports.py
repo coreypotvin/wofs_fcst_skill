@@ -1,3 +1,5 @@
+# Imports all modules used by package
+
 import warnings
 warnings.simplefilter("ignore", category=DeprecationWarning)
 

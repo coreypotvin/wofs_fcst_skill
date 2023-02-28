@@ -1,3 +1,5 @@
+# Contains most of the classes and definitions used by package
+
 from params import *
 
 class Unbuffered:
