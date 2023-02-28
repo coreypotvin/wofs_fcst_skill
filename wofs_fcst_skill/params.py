@@ -70,8 +70,6 @@ imp_vars = 15#False
 direction = 'forward'
 perm_method = 'multipass'
 
-#nvars = 40#28  #60-44, 120-30/41, 180-28/40      #45#37#31
-
 if learn_algo == 'AT':
   do_hyper_opt = False
 
