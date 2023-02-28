@@ -26,8 +26,6 @@ def compute_aupdc(prob_predictions, test_labels, classes):
 
     fpr, tpr, thresholds = roc_curve(y_true, y_score, pos_label=1)
 
-    print ('AAAAAAAAAAAAAA', len(thresholds))
-
     for threshold in thresholds:
 
       indices = np.where( (y_true == 1) & (y_score >= threshold) )[0]
@@ -655,3 +653,506 @@ def subsample3(labels, indices):
     all_new_indices = np.concatenate((new_indices, all_new_indices))
   return all_new_indices.astype(int)
 
+def dataset_split(features, all_features, labels, train_test_split_param, class_balancing=False, num_folds=None, rng=None):
+
+ all_dates = all_features['date'].values
+ num_examples = features.shape[0]
+
+ # Un-nested CV options
+
+ if train_test_split_param in ['2017', '2018', '2019', '2020', '2021']:
+
+  index = np.where((all_dates.contains(train_test_split_param)))[0].tolist()
+  index2 = [x for x in range(num_examples) if x not in index]
+  index = np.asarray(index)
+  index2 = np.asarray(index2)
+  test_features = features.iloc[index]
+  train_features = features.iloc[index2]
+  test_labels = labels[index]
+  train_labels = labels[index2]
+  all_features_train = all_features.iloc[index2]
+
+  return train_features, train_labels, test_features, test_labels, all_features_train
+
+ elif type(train_test_split_param)==str and 'dates' in train_test_split_param and train_test_split_param!='dates':
+
+  dates = sorted(list(set(all_dates)))
+  tot=0
+  date_groups = []
+  date_group = []
+  for date in dates:
+    date_group.append(date)
+    tot += len(all_dates[all_dates==date])
+    if tot >= (len(date_groups)+1)*len(all_dates)/num_folds:
+      date_groups.append(date_group)
+      date_group=[]
+
+  ind = int(train_test_split_param[-1])
+  date_group = date_groups[ind]
+  index = np.where((all_dates.isin(date_group)))[0].tolist()
+  index2 = [x for x in range(num_examples) if x not in index]
+  index = np.asarray(index)
+  index2 = np.asarray(index2)
+  test_features = features.iloc[index]
+  train_features = features.iloc[index2]
+  test_labels = labels[index]
+  train_labels = labels[index2]
+  all_features_train = all_features.iloc[index2]
+
+  return train_features, train_labels, test_features, test_labels, all_features_train
+
+ elif type(train_test_split_param) == 'float':
+
+  train_features, test_features, train_labels, test_labels = train_test_split(features, labels, test_size = train_test_split_param, random_state = rng)
+  all_features_train, dummy, dummy, dummy = train_test_split(all_features, labels, test_size = train_test_split_param, random_state = rng)
+
+  return train_features, train_labels, test_features, test_labels, all_features_train
+
+ # Nested CV
+
+ elif train_test_split_param == 'dates':
+
+  dates = sorted(list(set(all_dates)))
+  tot=0
+  date_groups = []
+  date_group = []
+  for date in dates:
+    date_group.append(date)
+    tot += len(all_dates[all_dates==date])
+    if tot >= (len(date_groups)+1)*len(all_dates)/num_folds:
+      date_groups.append(date_group)
+      date_group=[]
+
+  allfolds_test_features = []; allfolds_test_orig_features = []; allfolds_train_features = []; allfolds_test_labels = []; allfolds_train_labels = []; allfolds_all_features_train = []
+
+  for ind in range(num_folds):
+    date_group = date_groups[ind]
+    index = np.where(np.isin(all_dates, date_group))[0].tolist()
+    index2 = [x for x in range(num_examples) if x not in index]
+    index = np.asarray(index)
+    index2 = np.asarray(index2)
+    test_features = features.iloc[index]
+    train_features = features.iloc[index2]
+    test_labels = labels[index]
+    train_labels = labels[index2]
+
+    if class_balancing:
+
+      index = subsample(test_labels, index, ratio=test_ratio)
+      test_features = features.iloc[index]
+      test_labels = labels[index]
+
+    all_features_train = all_features.iloc[index2] 
+    allfolds_test_features.append(test_features)
+    allfolds_train_features.append(train_features)
+    allfolds_test_labels.append(test_labels)
+    allfolds_train_labels.append(train_labels)
+    allfolds_all_features_train.append(all_features_train)
+
+    if stratify_verif:
+      print ('Reading original features: %s' % orig_features_fname)
+      orig_features = pd.read_feather(orig_features_fname)
+      test_orig_features = orig_features.iloc[index]
+      allfolds_test_orig_features.append(test_orig_features)
+      
+  return allfolds_train_features, allfolds_train_labels, allfolds_test_features, allfolds_test_labels, allfolds_all_features_train, allfolds_test_orig_features, date_groups
+
+ else:
+
+  print ('Invalid train_test_split_param!')
+
+def hyper_opt_learn_prep(learn_algo, rng):
+
+ if learn_algo in ['RF', 'ORF', 'stacked_RF']:
+
+   n_estimators = [int(x) for x in np.linspace(start = 200, stop = 2000, num = 10)]
+   max_features = ['log2']#, 'sqrt']
+   max_depth = [int(x) for x in np.arange(5, 41, 5)]
+   min_samples = [x for x in range(3, 25, 3)]
+   min_split = [x for x in range(5, 31, 5)]
+
+   if learn_algo in ['RF', 'stacked_RF']:
+     param_distributions = {'n_estimators': n_estimators,
+        'max_features': max_features,
+        'min_samples_leaf': min_samples,#[1, 2, 4, 6, 9],
+        'min_samples_split': min_split,#[5, 10, 15, 20, 30, 50],
+        'max_depth': max_depth}
+     learner = RandomForestClassifier(random_state=rng)
+
+   elif learn_algo == 'ORF':
+     param_distributions = {'estimator__n_estimators': n_estimators,
+        'estimator__max_features': max_features,
+        'estimator__min_samples_leaf': min_samples,
+        'estimator__min_samples_split': min_split,
+        'estimator__max_depth': max_depth}
+     learner = OrdinalClassifier(RandomForestClassifier(random_state=rng), n_jobs=1)
+
+ elif learn_algo in ['LR', 'OLR', 'stacked_LR']:
+
+   penalty = ['elasticnet']
+   l1_ratio = np.arange(0, 1.0000001, 0.1)
+   C = np.logspace(-3, 2, num=10)
+
+   if learn_algo in ['LR', 'stacked_LR']:
+     param_distributions = {'penalty': penalty, 'l1_ratio': l1_ratio, 'C': C}
+     learner = LogisticRegression(solver='saga', max_iter=1000, random_state=rng)
+   elif learn_algo == 'OLR':
+     param_distributions = {'estimator__penalty': penalty, 'estimator__l1_ratio': l1_ratio, 'estimator__C': C}
+     learner = OrdinalClassifier(LogisticRegression(solver='saga', max_iter=1000, random_state=rng), n_jobs=1)
+
+ elif learn_algo in ['NN', 'stacked_NN']:
+
+   param_distributions = {
+     'hidden_layer_sizes': [(sp_randint.rvs(50,500,1,random_state=rng),sp_randint.rvs(50,500,1,random_state=rng),) for i in range(100)] ,
+     #'hidden_layer_sizes': [(sp_randint.rvs(50,500,1,random_state=rng),sp_randint.rvs(50,500,1,random_state=rng),)],#, 
+                                     #(sp_randint.rvs(50,500,1,random_state=rng),)],
+     'activation': ['tanh', 'relu', 'logistic'],
+     'alpha': np.arange(0.1, 0.91, 0.1),
+     'learning_rate_init': np.arange(0.0001, 0.0031, .001)
+   }
+
+   learner = MLPClassifier(max_iter=1000, random_state=rng)
+
+ elif learn_algo=='GB':
+
+   param_distributions = {
+     'n_estimators'     : [int(x) for x in np.linspace(start = 100, stop = 1000, num = 10)],
+     'max_depth'        : [int(x) for x in np.arange(2, 15, 3)],
+     'grow_policy'      : ['depthwise', 'lossguide'],
+     'learning_rate'    : np.arange(0.1, 0.91, 0.2),
+     'subsample'        : [0.5, 0.75, 1],
+     'reg_lambda'       : np.arange(0, 1.01, 0.2),
+     'reg_alpha'        : np.arange(0, 1.01, 0.2),
+     "min_child_weight" : [ 1, 3, 5, 7 ],
+     "gamma"            : [ 0.0, 0.1, 0.2, 0.3, 0.4 ],
+     "colsample_bytree" : [ 0.3, 0.4, 0.5, 0.7 ]
+   }
+
+   learner = XGBClassifier(objective='multi:softmax', eval_metric='mlogloss', nthread=1, random_state=rng)
+
+ elif learn_algo=='GBhist':
+
+   param_distributions = {
+     'max_iter'         : [int(x) for x in np.linspace(start = 100, stop = 1000, num = 10)],
+     'max_depth'        : [int(x) for x in np.arange(2, 15, 3)],
+     'learning_rate'    : [0.0001, 0.0003, 0.001, .003, .01, .03, .1, .3],
+     'min_samples_leaf' : [x for x in range(3, 25, 3)],
+     'l2_regularization': np.arange(0.1, 0.91, 0.2),
+     'max_bins'         : [50, 100, 150, 200]
+   }
+
+   learner = HistGradientBoostingClassifier(random_state=rng)
+
+ return learner, param_distributions
+
+def hyper_opt_unnestedCV_prep(train_test_split_param, tuning_CV_split_method, num_classes=None, all_dates=None, date_groups=None):
+
+ if tuning_CV_split_method == 'year':
+
+   print ('Splitting hyperparameter optimization CV folds by year')
+
+   CV = []
+
+   years = ['2017', '2018', '2019', '2020', '2021']
+   if train_test_split_param in years:
+     years.remove(train_test_split_param)
+
+   for y, year in enumerate(years):
+
+     test_indices = np.where((all_dates.str.contains(year)))[0].tolist()
+     train_indices = np.where((~(all_dates.str.contains(year))))[0].tolist()#[x for x in range(len(features['mean_init_score'])) if x not in test_indices]
+
+     print ('CV fold #%d (validation year: %s): %d/%d training/validation samples' % (y, year, len(train_indices), len(test_indices)))
+
+     CV.append((train_indices, test_indices))
+
+ elif tuning_CV_split_method == 'dates':
+
+   print ('Splitting hyperparameter optimization CV folds by date')
+
+   CV = []
+
+   ind = int(train_test_split_param[-1])
+   del date_groups[ind]
+
+   for d, date_group in enumerate(date_groups):
+     dates = pd.array(all_dates, dtype='string')
+     test_indices = np.where(np.isin(dates, date_group))[0].tolist()
+     train_indices = np.where(~np.isin(dates, date_group))[0].tolist()
+
+     print ('\nCV fold #%d: %d/%d training/validation samples' % (d, len(train_indices), len(test_indices)))
+     print ('      Class balance of training samples:  ', [round(len(train_labels[train_indices][train_labels[train_indices]==n])/len(train_labels[train_indices]),2) for n in range(num_classes)])
+     print ('      Class balance of validation samples:', [round(len(train_labels[test_indices][train_labels[test_indices]==n])/len(train_labels[test_indices]),2) for n in range(num_classes)])
+
+     CV.append((train_indices, test_indices))
+
+ elif tuning_CV_split_method == 'random':
+
+   CV = 5
+
+ return CV
+
+def hyper_opt_nestedCV_prep(allfolds_all_features_train, allfolds_train_labels, train_test_split_param, tuning_CV_split_method, num_classes, date_groups, class_balancing=False, train_ratio=None, test_ratio=None):
+
+ allfolds_CV = []
+
+ for fold in range(num_folds):
+
+   CV = []
+   date_groups2 = date_groups.copy()
+   del date_groups2[fold]
+   train_labels = allfolds_train_labels[fold]          
+   all_features_train = allfolds_all_features_train[fold]
+
+   print ('     ~~~~~~~~~~~~~~~~~~~~~~~\n')
+
+   for d, date_group in enumerate(date_groups2):
+
+     dates = pd.array(all_features_train['date'], dtype='string')
+     test_indices = np.where(np.isin(dates, date_group))[0].tolist()
+     train_indices = np.where(~np.isin(dates, date_group))[0].tolist()
+
+     if class_balancing:
+       print ('CV fold #%d: %d/%d training/validation samples' % (d, len(train_indices), len(test_indices)))
+       train_indices = subsample(train_labels[train_indices], train_indices, ratio=train_ratio)
+       test_indices = subsample(train_labels[test_indices], test_indices, ratio=test_ratio)
+
+     print ('\nCV fold #%d: %d/%d training/validation samples' % (d, len(train_indices), len(test_indices)))
+     try:
+       print ('      Class balance of training samples:  ', [round(len(train_labels.iloc[train_indices][train_labels.iloc[train_indices]==n])/len(train_labels.iloc[train_indices]),2) for n in range(num_classes)])
+       print ('      Class balance of validation samples:', [round(len(train_labels.iloc[test_indices][train_labels.iloc[test_indices]==n])/len(train_labels.iloc[test_indices]),2) for n in range(num_classes)])
+     except:
+       print ('      Class balance of training samples:  ', [round(len(train_labels[train_indices][train_labels[train_indices]==n])/len(train_labels[train_indices]),2) for n in range(num_classes)])
+       print ('      Class balance of validation samples:', [round(len(train_labels[test_indices][train_labels[test_indices]==n])/len(train_labels[test_indices]),2) for n in range(num_classes)])
+
+     CV.append((train_indices, test_indices))
+
+   allfolds_CV.append(CV)
+
+ return allfolds_CV
+
+def hyper_opt_perform_unnestedCV(train_features, train_labels, best_params_fname, learner, param_distributions, num_folds, n_iter, rng):
+
+ clf = RandomizedSearchCV(estimator = learner, param_distributions = param_distributions, n_iter = n_iter, cv=num_folds, verbose=1, random_state=rng, n_jobs = 10)
+ best_model = clf.fit(train_features, train_labels)
+ best_params = best_model.best_params_
+ print (best_params)
+
+ with open(best_params_fname, 'wb') as handle:
+   pickle.dump(best_params, handle)
+
+ return best_params
+
+def hyper_opt_perform_nestedCV(allfolds_train_features, allfolds_train_labels, best_params_fname, learner, param_distributions, allfolds_CV, n_iter, rng):
+
+
+ allfolds_best_params = []
+
+ for fold in range(len(allfolds_CV)):
+
+   CV = allfolds_CV[fold]
+   clf = BayesSearchCV(estimator = learner, scoring = make_scorer(RPS, greater_is_better=False, needs_proba=True), search_spaces = param_distributions, n_iter = n_iter, cv=CV, verbose=1, random_state=rng, n_points = 10, n_jobs = 40)
+   best_model = clf.fit(allfolds_train_features[fold], allfolds_train_labels[fold])
+
+   best_params = best_model.best_params_
+   print (best_params)
+   allfolds_best_params.append(best_params)
+
+   best_params_fname2 = best_params_fname.split('.pkl')[0]+'_%d.pkl' % fold
+   with open(best_params_fname2, 'wb') as handle:
+     pickle.dump(best_params, handle)
+
+ return allfolds_best_params
+
+def train_model_nestedCV(allfolds_best_params, allfolds_train_features, allfolds_train_labels, learn_algo, best_model_fname, rng):
+
+  allfolds_model = []
+
+  for fold in range(len(allfolds_best_params)):
+
+    best_params = allfolds_best_params[fold]
+
+    train_features = allfolds_train_features[fold]
+    train_labels = allfolds_train_labels[fold]
+
+    if learn_algo=='ORF':
+
+      model = OrdinalClassifier(estimator = RandomForestClassifier(n_estimators = best_params['estimator__n_estimators'], max_features=best_params['estimator__max_features'], max_depth=best_params['estimator__max_depth'], min_samples_leaf = best_params['estimator__min_samples_leaf'], min_samples_split=best_params['estimator__min_samples_split'], random_state=rng), n_jobs=1)
+
+    elif learn_algo in ['RF', 'stacked_RF']:
+
+      model = RandomForestClassifier(n_estimators = best_params['n_estimators'], max_features=best_params['max_features'], max_depth=best_params['max_depth'], min_samples_leaf = best_params['min_samples_leaf'], min_samples_split=best_params['min_samples_split'], random_state=rng)
+
+    elif learn_algo in ['LR', 'stacked_LR']:
+
+      model = LogisticRegression(penalty = best_params['penalty'], l1_ratio = best_params['l1_ratio'], C = best_params['C'], solver='saga', max_iter=1000, random_state=rng)
+     
+    elif learn_algo=='OLR':
+
+      model = OrdinalClassifier(estimator = LogisticRegression(penalty = best_params['estimator__penalty'], l1_ratio = best_params['estimator__l1_ratio'], C = best_params['estimator__C'], solver='saga', max_iter=1000, random_state=rng), n_jobs=1)
+
+    elif learn_algo in ['NN', 'stacked_NN']:
+
+      model = MLPClassifier(hidden_layer_sizes = best_params['hidden_layer_sizes'], activation = best_params['activation'], learning_rate_init = best_params['learning_rate_init'], alpha = best_params['alpha'], max_iter=1000, random_state=rng)
+
+    elif learn_algo=='GB':
+
+      model = XGBClassifier(objective='multi:softmax', eval_metric='mlogloss', n_estimators = best_params['n_estimators'], max_depth=best_params['max_depth'], grow_policy=best_params['grow_policy'], learning_rate=best_params['learning_rate'], subsample=best_params['subsample'], reg_lambda=best_params['reg_lambda'], reg_alpha=best_params['reg_alpha'], min_child_weight = best_params['min_child_weight'], gamma = best_params['gamma'], colsample_bytree = best_params['colsample_bytree'], nthread=10, random_state=rng)
+
+    elif learn_algo=='GBhist':
+
+      model = HistGradientBoostingClassifier(max_iter = best_params['max_iter'], max_depth = best_params['max_depth'], learning_rate = best_params['learning_rate'], min_samples_leaf = best_params['min_samples_leaf'], l2_regularization =  best_params['l2_regularization'], max_bins =  best_params['max_bins'], early_stopping=True, random_state=rng)
+
+    model.fit(train_features, train_labels.astype(int))
+    allfolds_model.append(model)
+    best_model_fname2 = best_model_fname.split('.joblib')[0]+'_%d.joblib' % fold
+    dump(model, best_model_fname2)
+
+  return allfolds_model
+
+def train_model_unnestedCV(best_params, train_features, train_labels, learn_algo, best_model_fname, rng):
+
+    if learn_algo=='RF':
+
+      model = RandomForestClassifier(n_estimators = best_params['n_estimators'], max_features=best_params['max_features'], max_depth=best_params['max_depth'], min_samples_leaf = best_params['min_samples_leaf'], min_samples_split=best_params['min_samples_split'], random_state=rng)
+
+    elif learn_algo=='LR':
+
+      model = LogisticRegression(penalty = best_params['penalty'], l1_ratio = best_params['l1_ratio'], C = best_params['C'], solver='saga', max_iter=1000, random_state=rng)
+
+    elif learn_algo=='ORF':
+
+      model = OrdinalClassifier(RandomForestClassifier(n_estimators = best_params['n_estimators'], max_features=best_params['max_features'], max_depth=best_params['max_depth'], min_samples_leaf = best_params['min_samples_leaf'], min_samples_split=best_params['min_samples_split'], random_state=rng), n_jobs=1)
+
+    elif learn_algo=='OLR':
+
+      model = OrdinalClassifier(LogisticRegression(penalty = best_params['penalty'], l1_ratio = best_params['l1_ratio'], C = best_params['C'], solver='saga', max_iter=1000, random_state=rng), n_jobs=1)
+
+    elif learn_algo=='NN':
+
+      model = MLPClassifier(hidden_layer_sizes = best_params['hidden_layer_sizes'], activation = best_params['activation'], learning_rate_init = best_params['learning_rate_init'], alpha = best_params['alpha'], max_iter=1000, random_state=rng) 
+
+    elif learn_algo=='GB':
+
+      model = XGBClassifier(objective='multi:softmax', eval_metric='mlogloss', n_estimators = best_params['n_estimators'], max_depth=best_params['max_depth'], grow_policy=best_params['grow_policy'], learning_rate=best_params['learning_rate'], subsample=best_params['subsample'], reg_lambda=best_params['reg_lambda'], reg_alpha=best_params['reg_alpha'], min_child_weight = best_params['min_child_weight'], gamma = best_params['gamma'], colsample_bytree = best_params['colsample_bytree'], nthread=10, random_state=rng)
+
+    elif learn_algo=='GBhist':
+
+      model = HistGradientBoostingClassifier(max_iter = best_params['max_iter'], max_depth = best_params['max_depth'], learning_rate = best_params['learning_rate'], min_samples_leaf = best_params['min_samples_leaf'], l2_regularization =  best_params['l2_regularization'], max_bins =  best_params['max_bins'], early_stopping=True, random_state=rng)
+
+    model.fit(train_features, train_labels)
+    dump(model, best_model_fname) 
+
+def verify(allfolds_model, allfolds_train_labels, allfolds_test_labels, allfolds_train_features, allfolds_test_features, allfolds_test_orig_features, combine_classes, num_classes, stratify_verif=False):
+
+  baseline_preds = np.empty(0); prob_predictions = []; test_labels = np.empty(0); test_features = np.empty(0)
+  train_predictions = np.empty(0); predictions = np.empty(0); all_train_errors = np.empty(0)
+  allfolds_errors = []; class_acc = []; allfolds_auc = []
+
+  for fold in range(len(allfolds_model)):
+
+    model = allfolds_model[fold]
+
+    new_test_features = allfolds_test_features[fold]
+    new_train_features = allfolds_train_features[fold]
+
+    if stratify_verif:
+      new_test_orig_features = allfolds_test_orig_features[fold]
+    new_prob_predictions = model.predict_proba(new_test_features)
+    new_train_prob_predictions = model.predict_proba(new_train_features)
+    new_predictions = model.predict(new_test_features)
+    new_train_predictions = model.predict(new_train_features)
+    new_test_labels = allfolds_test_labels[fold]
+    new_train_labels = allfolds_train_labels[fold]
+    train_predictions = model.predict(allfolds_train_features[fold])
+    train_labels = allfolds_train_labels[fold]
+
+    if combine_classes and num_classes==5:
+
+      temp = np.ones(new_predictions.shape[0])
+      temp[new_predictions==0] = 0
+      temp[new_predictions==4] = 2
+      new_predictions = temp.copy().astype(int)
+
+      temp = np.ones(train_predictions.shape[0])
+
+      temp[train_predictions==0] = 0
+      temp[train_predictions==4] = 2
+      train_predictions = temp.copy().astype(int)
+
+      temp = np.ones(new_test_labels.shape[0])
+      temp[new_test_labels==0] = 0
+      temp[new_test_labels==4] = 2
+      new_test_labels = temp.copy().astype(int)
+
+      temp = np.ones(train_labels.shape[0])
+      temp[train_labels==0] = 0
+      temp[train_labels==4] = 2
+      train_labels = temp.copy().astype(int)
+
+      temp = np.empty((new_prob_predictions.shape[0], 3))
+      temp[:,0] = new_prob_predictions[:,0]
+      temp[:,2] = new_prob_predictions[:,4]
+      temp[:,1] = np.sum(new_prob_predictions[:,1:4], axis=1)
+      new_prob_predictions = temp.copy()
+
+    new_errors = abs(new_predictions - new_test_labels)
+    allfolds_errors.append(np.mean(new_errors))
+    new_class_acc = balanced_accuracy_score(new_test_labels, new_predictions)#np.count_nonzero(new_predictions == new_test_labels)/len(new_test_labels)
+    class_acc.append(new_class_acc)
+    train_errors = abs(train_predictions - train_labels)
+    all_train_errors = np.concatenate((train_errors, all_train_errors))
+
+    if fold==0:
+      test_features = copy.deepcopy(new_test_features)
+      if stratify_verif:
+        test_orig_features = copy.deepcopy(new_test_orig_features)
+      predictions = copy.deepcopy(new_predictions)
+      prob_predictions = copy.deepcopy(new_prob_predictions)
+      train_prob_predictions = copy.deepcopy(new_train_prob_predictions)
+      test_labels = copy.deepcopy(new_test_labels)
+    else:
+      test_features = pd.concat((test_features, new_test_features))
+      if stratify_verif:
+        test_orig_features = pd.concat((test_orig_features, new_test_orig_features))
+      predictions = np.concatenate((predictions, new_predictions))
+      prob_predictions = np.concatenate((prob_predictions, new_prob_predictions))
+      train_prob_predictions = np.concatenate((train_prob_predictions, new_train_prob_predictions))
+      test_labels = np.concatenate((test_labels, new_test_labels))
+
+    #baseline_preds = np.concatenate((baseline_preds, np.repeat((num_classes+1)/2-1, len(allfolds_test_labels[fold]))))
+    baseline_preds = np.concatenate((baseline_preds, np.random.choice([0,1,2], size=len(allfolds_test_labels[fold]), p=[0.2, 0.6, 0.2])))
+
+    print ('\nMean training prediction error (fold %s): %.2f' % (fold, round(np.mean(train_errors), 2)))
+    print ('Mean testing  prediction error (fold %s): %.2f' % (fold, round(np.mean(new_errors), 2)))
+    print ('Classification Accuracy (fold %s): %.3f' % (fold, new_class_acc))
+
+    if num_classes==3 or combine_classes:
+      classes = ['Below Avg', 'Near Avg', 'Above Avg']
+    elif num_classes==5:
+      classes = ['Poor', 'Below Avg', 'Near Avg', 'Above Avg', 'Great']
+    fig, SRs, tpr, all_auc, all_max_csi, all_max_csi_thres = plot_ROC(new_prob_predictions, new_test_labels, classes)
+    print ('Macro-average AUC (fold %s): %.3f ' % (fold, mean(all_auc)))
+    allfolds_auc.append(mean(all_auc))
+
+  if combine_classes:
+    num_classes2 = 3
+  else:
+    num_classes2 = num_classes
+
+  allfolds_errors = np.asarray(allfolds_errors)
+  class_acc = np.asarray(class_acc)
+  allfolds_auc = np.asarray(allfolds_auc)
+
+  print ('\nTesting error across folds:            %.3f +/- %.3f' % (np.mean(allfolds_errors), np.std(allfolds_errors)))
+  print ('Classification Accuracy across folds:  %.3f +/- %.3f' % (np.mean(class_acc), np.std(class_acc)))
+  print ('Macro-Average AUC across folds:        %.3f +/- %.3f' % (np.mean(allfolds_auc), np.std(allfolds_auc)))
+
+  if stratify_verif:
+    test_orig_features['prob_predictions'] = prob_predictions.tolist()
+    test_orig_features['test_labels'] = test_labels.tolist()
+    test_orig_features['predictions'] = predictions.tolist()
+    test_orig_features.reset_index(drop=True, inplace=True)
+    #test_orig_features.to_feather(predictions_fname) 
+
+  return baseline_preds, predictions, train_predictions, prob_predictions, test_labels, num_classes2

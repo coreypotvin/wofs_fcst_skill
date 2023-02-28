@@ -6,11 +6,11 @@ def main(argv=None):
 
   write = True
   max_nvars = 45
-  class_index = 1#2#4
+  class_index = 2#4
   grouped = False
   start_time = time.time()
 
-  direction = 'backward'#'forward'#'backward'
+  direction = 'forward'#'backward'
 
   if direction=='forward':
     scoring_strategy = 'minimize'
@@ -43,17 +43,16 @@ def main(argv=None):
     nvars=min(max_nvars, train_features.shape[1])
 
     if grouped:
-      perm_imp_fname = '%s/grouped_perm_imp_%s_nvars=%d.joblib' % (MAIN_DIR, iter_name, nvars)
+      perm_imp_fname = '%s/grouped_perm_imp_%s.joblib' % (MAIN_DIR, iter_name)
     else:
-      perm_imp_fname = '%s/perm_imp_%s_%s_nvars=%d.joblib' % (MAIN_DIR, direction, iter_name, nvars)
+      perm_imp_fname = '%s/perm_imp_%s_%s.joblib' % (MAIN_DIR, direction, iter_name)
     if grouped:
-      rankings_fname = '%s/grouped_rankings_%s_class=%d_nvars=%d.png' % (MAIN_DIR, iter_name, class_index, nvars)
+      rankings_fname = '%s/grouped_rankings_%s_class=%d.png' % (MAIN_DIR, iter_name, class_index)
     else:
-      rankings_fname = '%s/rankings_%s_%s_class=%d_nvars=%d.png' % (MAIN_DIR, direction, iter_name, class_index, nvars)
-    #ale_fname = '%s/ale_%s_%s_nvars=%d.joblib' % (MAIN_DIR, direction, iter_name, nvars)
-    ale_fname = '%s/ale_%s_%s_class=%d_nvars=%d.joblib' % (MAIN_DIR, direction, iter_name, class_index, nvars)
-    ale_plot_fname = '%s/ale_%s_%s_class=%d_nvars=%d.png' % (MAIN_DIR, direction, iter_name, class_index, nvars)
-    imp_vars_fname = '%s/imp_vars_%s_%s_nvars=%d.pkl' % (MAIN_DIR, direction, iter_name, nvars)
+      rankings_fname = '%s/rankings_%s_%s_class=%d.png' % (MAIN_DIR, direction, iter_name, class_index)
+    ale_fname = '%s/ale_%s_%s_class=%d.joblib' % (MAIN_DIR, direction, iter_name, class_index)
+    ale_plot_fname = '%s/ale_%s_%s_class=%d.png' % (MAIN_DIR, direction, iter_name, class_index)
+    imp_vars_fname = '%s/imp_vars_%s_%s.pkl' % (MAIN_DIR, direction, iter_name)
 
     if 'NN' in iter_name or 'GB' in iter_name or 'LR' in iter_name or 'AT' in iter_name:
       n_jobs = 1
@@ -80,8 +79,6 @@ def main(argv=None):
         perm_imp_results, groups = explainer.grouped_permutation_importance(perm_method = 'grouped_only', evaluation_fn = metrics.RPS, scoring_strategy = "maximize", sample_size=100, n_permute=1, n_jobs=n_jobs)#, clustering_kwargs = {'n_clusters' : 3})
         print (groups)
       else:
-        #perm_imp_results = explainer.permutation_importance(n_vars=nvars, evaluation_fn = accuracy_score, scoring_strategy = "minimize", n_permute=5, n_jobs=n_jobs, verbose=True, random_seed=0)
-        #perm_imp_results = explainer.permutation_importance(n_vars=nvars, evaluation_fn = metrics.RPSS, scoring_strategy = "minimize", n_permute=5, n_jobs=n_jobs, verbose=True, random_seed=0)
         perm_imp_results = explainer.permutation_importance(n_vars=nvars, direction=direction, evaluation_fn = metrics.RPS, scoring_strategy = scoring_strategy, n_permute=5, n_jobs=n_jobs, verbose=True, random_seed=0)
 
       print ('Writing to: %s' % perm_imp_fname)
@@ -99,15 +96,6 @@ def main(argv=None):
 
       print ('Loading %s' % ale_fname)
       ale = explainer.load(ale_fname)
-      #print (ale)
-      #print (ale['fcst_ws_80_median_max__RandomForestClassifier__ale'])
-      #print (ale['fcst_ws_80_median_max__bin_values'])
-
-    #features = copy.deepcopy(explainer.feature_names)
-    #for feature in explainer.feature_names:
-    #  if len(np.unique(explainer.X[feature])) < 3:
-    #    features.remove(feature)
-    #    print ('Removing: %s' % feature)
 
     print (perm_imp_results)
 
@@ -124,9 +112,6 @@ def main(argv=None):
     with open(imp_vars_fname, 'wb') as handle:
       pickle.dump(important_vars, handle)
 
-    #ale = explainer.ale(features, n_bins=20, subsample=5000, n_jobs=30, n_bootstrap=1, random_seed=0, class_index=class_index)
-    #ale_var_results = explainer.ale_variance(ale)
-
     important_vars = list_scores(ale_var_results, 'ale_variance', estimator, nvars=nvars)
 
     panels = [('multipass', estimator), ('ale_variance', estimator)]
@@ -135,22 +120,7 @@ def main(argv=None):
     imp_plot = explainer.plot_importance(data = data, panels = panels, plot_correlated_features=True, num_vars_to_plot=nvars)
     P.savefig(rankings_fname)
 
-    important_vars2 = []
-    for var in important_vars:
-      if 'stdev' in var:
-        var2 = var.replace('stdev', 'median')
-        if var2 in important_vars:
-          important_vars2.append(var); important_vars2.append(var2)
-          print (var, var2)
-        else:
-          var2 = var.replace('stdev', 'mean')
-          if var2 in important_vars:
-            print (var, var2)
-            important_vars2.append(var); important_vars2.append(var2)
-    print (important_vars2)
-
-
-    explainer.plot_ale(ale, features=important_vars2, to_probability=True)
+    explainer.plot_ale(ale, features=important_vars, to_probability=True)
     P.savefig(ale_plot_fname)
 
     print(("\n TOTAL RUNTIME: %.1f min \n" % ((time.time() - start_time)/60.)))
