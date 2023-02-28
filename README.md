@@ -19,8 +19,8 @@ OrdinalClassifier, available at https://github.com/leeprevost/OrdinalClassifier
 ## Getting Started
 
 1) conda env create -f environment_py38.yml
-2) install ml_workflow
-3) download OrdinalClassifier/ordinal.py
+2) Install ml_workflow
+3) Download OrdinalClassifier/ordinal.py
 4) python imports.py: identify any remaining missing modules
 
 ## Functions of scripts
