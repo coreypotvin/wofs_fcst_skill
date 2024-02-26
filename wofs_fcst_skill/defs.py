@@ -679,6 +679,8 @@ def dataset_split(features, all_features, labels, train_test_split_param, class_
  elif type(train_test_split_param)==str and 'dates' in train_test_split_param and train_test_split_param!='dates':
 
   dates = sorted(list(set(all_dates)))
+  random.seed(42)
+  random.shuffle(dates)
   tot=0
   date_groups = []
   date_group = []
@@ -715,6 +717,9 @@ def dataset_split(features, all_features, labels, train_test_split_param, class_
  elif train_test_split_param == 'dates':
 
   dates = sorted(list(set(all_dates)))
+  random.seed(42)
+  random.shuffle(dates)
+  #print (dates)
   tot=0
   date_groups = []
   date_group = []
@@ -725,6 +730,22 @@ def dataset_split(features, all_features, labels, train_test_split_param, class_
       date_groups.append(date_group)
       date_group=[]
 
+  ## Measure effect of potential auto-correlations between consecutive dates split between training & testing folds
+  '''
+  for d, date_group in enumerate(date_groups):
+
+    test_dates = date_group
+    train_dates = [date for date in dates if date not in test_dates]
+
+    new_test_dates = remove_consecutive_dates(train_dates, test_dates)
+
+    print (len(train_dates), len(test_dates), len(new_test_dates))
+    print (train_dates)
+    print (test_dates)
+    print (new_test_dates)
+
+    date_groups[d] = new_test_dates
+  '''
   allfolds_test_features = []; allfolds_test_orig_features = []; allfolds_train_features = []; allfolds_test_labels = []; allfolds_train_labels = []; allfolds_all_features_train = []
 
   for ind in range(num_folds):
@@ -1146,9 +1167,22 @@ def verify(allfolds_model, allfolds_train_labels, allfolds_test_labels, allfolds
   class_acc = np.asarray(class_acc)
   allfolds_auc = np.asarray(allfolds_auc)
 
-  print ('\nTesting error across folds:            %.3f +/- %.3f' % (np.mean(allfolds_errors), np.std(allfolds_errors)))
+  print ('Testing error across folds:            %.3f +/- %.3f' % (np.mean(allfolds_errors), np.std(allfolds_errors)))
   print ('Classification Accuracy across folds:  %.3f +/- %.3f' % (np.mean(class_acc), np.std(class_acc)))
   print ('Macro-Average AUC across folds:        %.3f +/- %.3f' % (np.mean(allfolds_auc), np.std(allfolds_auc)))
+
+  #print ('ACC per class: %.2f / %.2f / %.2f' % (np.mean(per_class_acc, axis=1)[0], np.mean(per_class_acc, axis=1)[1], np.mean(per_class_acc, axis=1)[2]))
+  #print ('AUC per class: %.2f / %.2f / %.2f' % (np.mean(per_class_auc, axis=1)[0], np.mean(per_class_auc, axis=1)[1], np.mean(per_class_auc, axis=1)[2]))
+
+  cm = confusion_matrix(test_labels, predictions)
+  per_class_accuracy = cm.diagonal() / cm.sum(axis=1)
+  print ('ACC per class: %.2f / %.2f / %.2f' % (per_class_accuracy[0], per_class_accuracy[1], per_class_accuracy[2]))
+
+  y_true_binarized = label_binarize(test_labels, classes=[0, 1, 2])
+  auc_class_1 = roc_auc_score(y_true_binarized[:, 0], prob_predictions[:, 0])
+  auc_class_2 = roc_auc_score(y_true_binarized[:, 1], prob_predictions[:, 1])
+  auc_class_3 = roc_auc_score(y_true_binarized[:, 2], prob_predictions[:, 2])
+  print ('AUC per class: %.2f / %.2f / %.2f' % (auc_class_1, auc_class_2, auc_class_3))
 
   if stratify_verif:
     test_orig_features['prob_predictions'] = prob_predictions.tolist()
@@ -1158,3 +1192,31 @@ def verify(allfolds_model, allfolds_train_labels, allfolds_test_labels, allfolds
     #test_orig_features.to_feather(predictions_fname) 
 
   return baseline_preds, predictions, train_predictions, prob_predictions, test_labels, num_classes2
+
+def remove_consecutive_dates(list_a, list_b):
+    """Removes dates from list B that are consecutive with dates in list A."""
+    # Ensure both lists are sorted
+    list_a = [datetime.strptime(date_str, "%Y%m%d") for date_str in list_a]
+    list_b = [datetime.strptime(date_str, "%Y%m%d") for date_str in list_b]
+  
+    sorted_a = sorted(list_a)
+    sorted_b = sorted(list_b)
+
+    # Set for faster removal and search operations
+    to_remove = set()
+
+    # Check for each date in list A
+    for date in sorted_a:
+        prev_date = date - timedelta(days=1)
+        next_date = date + timedelta(days=1)
+        
+        # If previous or next date is in list B, mark it for removal
+        if prev_date in sorted_b:
+            to_remove.add(prev_date)
+        if next_date in sorted_b:
+            to_remove.add(next_date)
+
+    # Remove marked dates from list B
+    filtered_b = [date.strftime("%Y%m%d") for date in sorted_b if date not in to_remove]
+    
+    return filtered_b
